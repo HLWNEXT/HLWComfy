@@ -1,0 +1,10 @@
+ffmpeg
+opencv-python
+gguf
+simpleeval
+scikit-image
+webcolors
+piexif
+segment-anything
+timm
+openai

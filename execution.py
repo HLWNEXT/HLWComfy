@@ -178,6 +178,34 @@ def _map_node_over_list(obj, input_data_all, func, allow_interrupt=False, execut
         if execution_block is None:
             if pre_execute_cb is not None and index is not None:
                 pre_execute_cb(index)
+            
+            #FOR KRITA AI INTEGRATION, CONNECTS TO COMFYUI API NODES
+            # Inject API key for API nodes
+            if hasattr(obj, 'API_NODE') and getattr(obj, 'API_NODE', False):
+                import os
+                comfy_api_key = os.getenv('COMFY_API_KEY')
+                if comfy_api_key:
+                    inputs = dict(inputs)  # Create a copy
+                    inputs.setdefault('comfy_api_key', comfy_api_key)
+            # print(f"DEBUG: obj={obj}, func={func}, inputs={inputs}")
+            # Inject API key
+            if hasattr(obj, 'API_NODE') and getattr(obj, 'API_NODE', False):
+                import os
+                comfy_api_key = os.getenv('COMFY_API_KEY')
+                print(f"DEBUG: Found API node, env API key exists: {comfy_api_key is not None}")
+                
+                if comfy_api_key:
+                    # Create a copy of inputs and inject the API key
+                    inputs = dict(inputs)
+                    if inputs.get('comfy_api_key') is None:
+                        inputs['comfy_api_key'] = comfy_api_key
+                        print(f"DEBUG: Injected API key into inputs")
+                    else:
+                        print(f"DEBUG: API key already present in inputs")
+
+            print(f"DEBUG: Final inputs keys: {list(inputs.keys())}")
+            
+            
             results.append(getattr(obj, func)(**inputs))
         else:
             results.append(execution_block)
@@ -191,6 +219,8 @@ def _map_node_over_list(obj, input_data_all, func, allow_interrupt=False, execut
             input_dict = slice_dict(input_data_all, i)
             process_inputs(input_dict, i)
     return results
+   
+
 
 def merge_result_data(results, obj):
     # check which outputs need concatenating
