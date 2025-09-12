@@ -9,6 +9,7 @@ import traceback
 from enum import Enum
 from typing import List, Literal, NamedTuple, Optional, Union
 import asyncio
+import functools  # Xinru Liu API related fix
 
 import torch
 
@@ -34,6 +35,308 @@ from comfy_execution.progress import get_progress_state, reset_progress_state, a
 from comfy_execution.utils import CurrentNodeContext
 from comfy_api.internal import _ComfyNodeInternal, _NodeOutputInternal, first_real_override, is_class, make_locked_method_func
 from comfy_api.latest import io
+
+# Xinru Liu API related fix: PATCH: Fix async/sync issues in API nodes
+import sys
+def patch_api_client_operations():
+    """Patch API client operations to be properly async - Xinru Liu API related fix"""
+    try:
+        # Import the modules we need to patch
+        if 'comfy_api_nodes.apis.client' in sys.modules:
+            client_module = sys.modules['comfy_api_nodes.apis.client']
+            
+            # Patch SynchronousOperation.execute to be async for legacy nodes
+            if hasattr(client_module, 'SynchronousOperation'):
+                SynchronousOperation = client_module.SynchronousOperation
+                if not hasattr(SynchronousOperation.execute, '_patched'):
+                    original_execute = SynchronousOperation.execute
+                    
+                    async def async_execute(self, client=None):
+                        loop = asyncio.get_event_loop()
+                        return await loop.run_in_executor(None, functools.partial(original_execute, self, client))
+                    
+                    async_execute._patched = True
+                    SynchronousOperation.execute = async_execute
+            
+            # Also patch ApiClient.upload_file to be async
+            if hasattr(client_module, 'ApiClient'):
+                ApiClient = client_module.ApiClient
+                if not hasattr(ApiClient.upload_file, '_patched'):
+                    original_upload_file = ApiClient.upload_file
+                    
+                    @staticmethod
+                    async def async_upload_file(*args, **kwargs):
+                        print(f"DEBUG: ApiClient.upload_file called with args: {len(args)} kwargs: {list(kwargs.keys())}")  # Xinru Liu API related fix
+                        try:
+                            loop = asyncio.get_event_loop()
+                            result = await loop.run_in_executor(None, functools.partial(original_upload_file, *args, **kwargs))
+                            print(f"DEBUG: ApiClient.upload_file completed successfully")  # Xinru Liu API related fix
+                            return result
+                        except Exception as e:
+                            print(f"ERROR: ApiClient.upload_file failed: {e}")  # Xinru Liu API related fix
+                            raise
+                    
+                    async_upload_file._patched = True
+                    ApiClient.upload_file = async_upload_file
+        
+        # Add debugging for upload operations - Xinru Liu API related fix
+        if 'comfy_api_nodes.apinode_utils' in sys.modules:
+            utils_module = sys.modules['comfy_api_nodes.apinode_utils']
+            if hasattr(utils_module, 'upload_file_to_comfyapi') and not hasattr(utils_module.upload_file_to_comfyapi, '_debug_patched'):
+                original_upload_func = utils_module.upload_file_to_comfyapi
+                
+                async def debug_upload_file_to_comfyapi(file_bytes_io, filename, upload_mime_type, auth_kwargs):
+                    """Debug wrapper for upload operations - Xinru Liu API related fix"""
+                    import requests
+                    import time
+                    
+                    print(f"DEBUG: Starting upload - filename: {filename}, mime_type: {upload_mime_type}")
+                    print(f"DEBUG: File size: {file_bytes_io.getbuffer().nbytes} bytes")
+                    
+                    try:
+                        print(f"DEBUG: Calling original upload function...")  # Xinru Liu API related fix
+                        result = await original_upload_func(file_bytes_io, filename, upload_mime_type, auth_kwargs)
+                        print(f"DEBUG: Upload completed successfully, download URL: {result}")
+                        print(f"DEBUG: Upload URL components - Host: {result.split('/')[2] if '/' in result else 'unknown'}")  # Xinru Liu API related fix
+                        
+                        # Test if the URL is immediately accessible and apply fixes if needed
+                        try:
+                            loop = asyncio.get_event_loop()
+                            def test_download():
+                                response = requests.head(result, timeout=10)
+                                return response.status_code, dict(response.headers)
+                            
+                            status_code, headers = await loop.run_in_executor(None, test_download)
+                            print(f"DEBUG: Download URL test - Status: {status_code}, Content-Length: {headers.get('content-length', 'N/A')}")
+                            
+                            if status_code != 200:
+                                print(f"WARNING: Download URL is not accessible immediately after upload (status: {status_code})")
+                                
+                                # Try potential fixes
+                                from urllib.parse import unquote, quote
+                                
+                                # Fix 1: Wait for propagation and retry
+                                print("DEBUG: Waiting 3 seconds for URL propagation...")
+                                await asyncio.sleep(3)
+                                status_code, headers = await loop.run_in_executor(None, test_download)
+                                print(f"DEBUG: Download URL retest after 3s - Status: {status_code}")
+                                
+                                # Fix 2: Try URL decoding/encoding fix
+                                if status_code != 200:
+                                    print("DEBUG: Attempting URL encoding fix...")
+                                    # Sometimes URLs get double-encoded or corrupted
+                                    fixed_url = unquote(result)
+                                    if fixed_url != result:
+                                        print(f"DEBUG: Trying URL-decoded version: {fixed_url}")
+                                        def test_fixed_url():
+                                            response = requests.head(fixed_url, timeout=10)
+                                            return response.status_code
+                                        fixed_status = await loop.run_in_executor(None, test_fixed_url)
+                                        print(f"DEBUG: Fixed URL test - Status: {fixed_status}")
+                                        if fixed_status == 200:
+                                            print("DEBUG: Using URL-decoded version")
+                                            result = fixed_url
+                                
+                                # Final check and potential workaround
+                                if status_code != 200:
+                                    print(f"WARNING: URL still not accessible (final status: {status_code})")
+                                    print(f"WARNING: This suggests the file upload to Google Cloud Storage failed")
+                                    print(f"WARNING: Attempting workaround - re-uploading file...")
+                                    
+                                    # Workaround: Try re-uploading the file
+                                    try:
+                                        # Reset file position
+                                        file_bytes_io.seek(0)
+                                        print(f"DEBUG: Re-attempting upload...")
+                                        retry_result = await original_upload_func(file_bytes_io, filename, upload_mime_type, auth_kwargs)
+                                        print(f"DEBUG: Retry upload completed, new URL: {retry_result}")
+                                        
+                                        # Test the new URL
+                                        def test_retry_url():
+                                            response = requests.head(retry_result, timeout=10)
+                                            return response.status_code
+                                        retry_status = await loop.run_in_executor(None, test_retry_url)
+                                        print(f"DEBUG: Retry URL test - Status: {retry_status}")
+                                        
+                                        if retry_status == 200:
+                                            print("DEBUG: Retry upload successful! Using new URL")
+                                            result = retry_result
+                                        else:
+                                            print(f"WARNING: Retry also failed (status: {retry_status})")
+                                            print(f"WARNING: Attempting final workaround - base64 encoding...")  # Xinru Liu API related fix
+                                            
+                                            # Both uploads failed, try base64 as last resort with compression
+                                            try:
+                                                import base64
+                                                from PIL import Image
+                                                import io
+                                                
+                                                file_bytes_io.seek(0)
+                                                original_data = file_bytes_io.read()
+                                                original_size = len(original_data)
+                                                
+                                                # Try base64 with original image first
+                                                base64_data = base64.b64encode(original_data).decode('utf-8')
+                                                data_url = f"data:{upload_mime_type};base64,{base64_data}"
+                                                print(f"DEBUG: Original base64 data URL (length: {len(data_url)} chars)")
+                                                
+                                                # If too large, try compression - Xinru Liu API related fix
+                                                if len(data_url) >= 2000000:  # 2MB limit for base64 data
+                                                    print(f"DEBUG: Image too large, attempting compression...")
+                                                    
+                                                    # Load and compress image
+                                                    image = Image.open(io.BytesIO(original_data))
+                                                    print(f"DEBUG: Original image size: {image.size}, mode: {image.mode}")
+                                                    
+                                                    # Calculate target size for compression
+                                                    quality = 85
+                                                    max_attempts = 5
+                                                    
+                                                    for attempt in range(max_attempts):
+                                                        # Compress image
+                                                        compressed_io = io.BytesIO()
+                                                        if image.mode in ['RGBA', 'LA']:
+                                                            # Convert RGBA to RGB for JPEG compression
+                                                            background = Image.new('RGB', image.size, (255, 255, 255))
+                                                            background.paste(image, mask=image.split()[-1] if image.mode == 'RGBA' else None)
+                                                            background.save(compressed_io, format='JPEG', quality=quality, optimize=True)
+                                                        else:
+                                                            image.save(compressed_io, format='JPEG', quality=quality, optimize=True)
+                                                        
+                                                        compressed_data = compressed_io.getvalue()
+                                                        compressed_base64 = base64.b64encode(compressed_data).decode('utf-8')
+                                                        compressed_data_url = f"data:image/jpeg;base64,{compressed_base64}"
+                                                        
+                                                        print(f"DEBUG: Attempt {attempt+1}: Quality {quality}, compressed size: {len(compressed_data)} bytes, base64 length: {len(compressed_data_url)} chars")
+                                                        
+                                                        if len(compressed_data_url) < 2000000:
+                                                            print(f"DEBUG: Compression successful! Using compressed base64 image")
+                                                            result = compressed_data_url
+                                                            break
+                                                        else:
+                                                            quality -= 15  # Reduce quality for next attempt
+                                                            if quality < 30:
+                                                                quality = 30
+                                                    else:
+                                                        print(f"WARNING: Could not compress image small enough, keeping original URL")
+                                                        print(f"WARNING: ByteDance API will likely fail when trying to download from: {result}")
+                                                else:
+                                                    print(f"DEBUG: Base64 data size acceptable, using as fallback")
+                                                    result = data_url
+                                                    
+                                            except ImportError:
+                                                print(f"ERROR: PIL not available for image compression, trying basic base64...")
+                                                # Fallback to basic base64 without compression
+                                                try:
+                                                    import base64
+                                                    file_bytes_io.seek(0)
+                                                    file_data = file_bytes_io.read()
+                                                    base64_data = base64.b64encode(file_data).decode('utf-8')
+                                                    data_url = f"data:{upload_mime_type};base64,{base64_data}"
+                                                    if len(data_url) < 2000000:
+                                                        result = data_url
+                                                        print(f"DEBUG: Using basic base64 without compression")
+                                                    else:
+                                                        print(f"WARNING: Basic base64 too large, keeping original URL")
+                                                except Exception as basic_e:
+                                                    print(f"ERROR: Basic base64 failed: {basic_e}")
+                                            except Exception as base64_e:
+                                                print(f"ERROR: Base64 conversion failed: {base64_e}")
+                                                print(f"WARNING: ByteDance API will likely fail when trying to download from: {result}")
+                                    except Exception as retry_e:
+                                        print(f"ERROR: Retry upload failed: {retry_e}")
+                                        print(f"WARNING: Attempting final workaround - base64 encoding...")  # Xinru Liu API related fix
+                                        
+                                        # Final workaround: Convert to base64 and use data URL with compression
+                                        try:
+                                            import base64
+                                            from PIL import Image
+                                            import io
+                                            
+                                            file_bytes_io.seek(0)
+                                            original_data = file_bytes_io.read()
+                                            
+                                            # Try base64 with original image first
+                                            base64_data = base64.b64encode(original_data).decode('utf-8')
+                                            data_url = f"data:{upload_mime_type};base64,{base64_data}"
+                                            print(f"DEBUG: Created base64 data URL (length: {len(data_url)} chars)")
+                                            
+                                            # If too large, try compression - Xinru Liu API related fix
+                                            if len(data_url) >= 2000000:  # 2MB limit for base64 data
+                                                print(f"DEBUG: Image too large, attempting compression...")
+                                                
+                                                # Load and compress image
+                                                image = Image.open(io.BytesIO(original_data))
+                                                quality = 85
+                                                max_attempts = 5
+                                                
+                                                for attempt in range(max_attempts):
+                                                    compressed_io = io.BytesIO()
+                                                    if image.mode in ['RGBA', 'LA']:
+                                                        background = Image.new('RGB', image.size, (255, 255, 255))
+                                                        background.paste(image, mask=image.split()[-1] if image.mode == 'RGBA' else None)
+                                                        background.save(compressed_io, format='JPEG', quality=quality, optimize=True)
+                                                    else:
+                                                        image.save(compressed_io, format='JPEG', quality=quality, optimize=True)
+                                                    
+                                                    compressed_data = compressed_io.getvalue()
+                                                    compressed_base64 = base64.b64encode(compressed_data).decode('utf-8')
+                                                    compressed_data_url = f"data:image/jpeg;base64,{compressed_base64}"
+                                                    
+                                                    print(f"DEBUG: Compression attempt {attempt+1}: Quality {quality}, base64 length: {len(compressed_data_url)} chars")
+                                                    
+                                                    if len(compressed_data_url) < 2000000:
+                                                        print(f"DEBUG: Compression successful! Using compressed base64 image")
+                                                        result = compressed_data_url
+                                                        break
+                                                    else:
+                                                        quality -= 15
+                                                        if quality < 30:
+                                                            quality = 30
+                                                else:
+                                                    print(f"WARNING: Could not compress image small enough, keeping original URL")
+                                            else:
+                                                print(f"DEBUG: Base64 data size acceptable, using as fallback")
+                                                result = data_url
+                                                
+                                        except ImportError:
+                                            print(f"ERROR: PIL not available, trying basic base64...")
+                                            try:
+                                                import base64
+                                                file_bytes_io.seek(0)
+                                                file_data = file_bytes_io.read()
+                                                base64_data = base64.b64encode(file_data).decode('utf-8')
+                                                data_url = f"data:{upload_mime_type};base64,{base64_data}"
+                                                if len(data_url) < 2000000:
+                                                    result = data_url
+                                                    print(f"DEBUG: Using basic base64")
+                                                else:
+                                                    print(f"WARNING: Basic base64 too large")
+                                            except Exception as basic_e:
+                                                print(f"ERROR: Basic base64 failed: {basic_e}")
+                                        except Exception as base64_e:
+                                            print(f"ERROR: Base64 conversion failed: {base64_e}")
+                                            print(f"WARNING: ByteDance API will likely fail when trying to download from: {result}")
+                                else:
+                                    print("DEBUG: URL is now accessible")
+                                    
+                        except Exception as e:
+                            print(f"WARNING: Could not test download URL: {e}")
+                        
+                        return result
+                        
+                    except Exception as e:
+                        print(f"ERROR: Upload failed: {e}")
+                        raise
+                
+                debug_upload_file_to_comfyapi._debug_patched = True
+                utils_module.upload_file_to_comfyapi = debug_upload_file_to_comfyapi
+                
+    except ImportError:
+        pass  # Module not loaded yet, will be patched when imported
+
+# Apply the patch - Xinru Liu API related fix
+patch_api_client_operations()
 
 
 class ExecutionResult(Enum):
@@ -245,31 +548,40 @@ async def _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, f
             if pre_execute_cb is not None and index is not None:
                 pre_execute_cb(index)
             
-            #FOR KRITA AI INTEGRATION, CONNECTS TO COMFYUI API NODES
-            # Inject API key for API nodes
-            if hasattr(obj, 'API_NODE') and getattr(obj, 'API_NODE', False):
+            # Xinru Liu API related fix: FOR KRITA AI INTEGRATION, CONNECTS TO COMFYUI API NODES
+            # Apply patches for API client operations if needed
+            patch_api_client_operations()
+            
+            # Check if this is a ComfyUI v3 API node and inject API key into hidden inputs
+            if isinstance(obj, _ComfyNodeInternal) or (is_class(obj) and issubclass(obj, _ComfyNodeInternal)):
+                # Check if this node is marked as an API node
+                if hasattr(obj, 'define_schema'):
+                    schema = obj.define_schema()
+                    if hasattr(schema, 'is_api_node') and getattr(schema, 'is_api_node', False):
+                        import os
+                        comfy_api_key = os.getenv('COMFY_API_KEY')
+                        print(f"DEBUG: Found API node, env API key exists: {comfy_api_key is not None}")
+                        
+                        if comfy_api_key and hidden_inputs is not None:
+                            # Inject API key into hidden inputs for v3 nodes
+                            hidden_inputs[io.Hidden.api_key_comfy_org] = comfy_api_key
+                            print(f"DEBUG: Injected API key into hidden inputs")
+            # Legacy v1 API node support (if needed)
+            elif hasattr(obj, 'API_NODE') and getattr(obj, 'API_NODE', False):
                 import os
                 comfy_api_key = os.getenv('COMFY_API_KEY')
-                if comfy_api_key:
-                    inputs = dict(inputs)  # Create a copy
-                    inputs.setdefault('comfy_api_key', comfy_api_key)
-            # print(f"DEBUG: obj={obj}, func={func}, inputs={inputs}")
-            # Inject API key
-            if hasattr(obj, 'API_NODE') and getattr(obj, 'API_NODE', False):
-                import os
-                comfy_api_key = os.getenv('COMFY_API_KEY')
-                print(f"DEBUG: Found API node, env API key exists: {comfy_api_key is not None}")
+                print(f"DEBUG: Found legacy API node, env API key exists: {comfy_api_key is not None}")
                 
                 if comfy_api_key:
-                    # Create a copy of inputs and inject the API key
+                    # Create a copy of inputs and inject the API key for legacy nodes
                     inputs = dict(inputs)
                     if inputs.get('comfy_api_key') is None:
                         inputs['comfy_api_key'] = comfy_api_key
-                        print(f"DEBUG: Injected API key into inputs")
+                        print(f"DEBUG: Injected API key into legacy inputs")
                     else:
-                        print(f"DEBUG: API key already present in inputs")
+                        print(f"DEBUG: API key already present in legacy inputs")
 
-            print(f"DEBUG: Final inputs keys: {list(inputs.keys())}")
+            print(f"DEBUG: Final inputs keys: {list(inputs.keys())}")  # Xinru Liu API related fix
             
             
             # V3
