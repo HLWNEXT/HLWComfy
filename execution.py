@@ -508,14 +508,51 @@ map_node_over_list = None #Don't hook this please
 async def resolve_map_node_over_list_results(results):
     remaining = [x for x in results if isinstance(x, asyncio.Task) and not x.done()]
     if len(remaining) == 0:
-        return [x.result() if isinstance(x, asyncio.Task) else x for x in results]
+        resolved_results = []
+        for x in results:
+            if isinstance(x, asyncio.Task):
+                result = x.result()
+            else:
+                result = x
+            
+            # Check if the result is an unawaited coroutine
+            if inspect.iscoroutine(result):
+                logging.warning(f"Found unawaited coroutine in results, awaiting it...")
+                try:
+                    result = await result
+                except Exception as e:
+                    logging.error(f"Failed to await nested coroutine: {e}")
+                    result.close()
+                    raise
+            
+            resolved_results.append(result)
+        return resolved_results
     else:
         done, pending = await asyncio.wait(remaining)
         for task in done:
             exc = task.exception()
             if exc is not None:
                 raise exc
-        return [x.result() if isinstance(x, asyncio.Task) else x for x in results]
+        
+        resolved_results = []
+        for x in results:
+            if isinstance(x, asyncio.Task):
+                result = x.result()
+            else:
+                result = x
+            
+            # Check if the result is an unawaited coroutine
+            if inspect.iscoroutine(result):
+                logging.warning(f"Found unawaited coroutine in results, awaiting it...")
+                try:
+                    result = await result
+                except Exception as e:
+                    logging.error(f"Failed to await nested coroutine: {e}")
+                    result.close()
+                    raise
+            
+            resolved_results.append(result)
+        return resolved_results
 
 async def _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, func, allow_interrupt=False, execution_block_cb=None, pre_execute_cb=None, hidden_inputs=None):
     # check if node wants the lists
@@ -603,12 +640,84 @@ async def _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, f
             if inspect.iscoroutinefunction(f):
                 async def async_wrapper(f, prompt_id, unique_id, list_index, args):
                     with CurrentNodeContext(prompt_id, unique_id, list_index):
-                        return await f(**args)
+                        try:
+                            # Call the async function to get a coroutine
+                            result = f(**args)
+                            
+                            # Handle case where function returns different types
+                            if inspect.iscoroutine(result):
+                                # This is a proper coroutine - await it
+                                return await result
+                            else:
+                                # Function returned a regular value instead of coroutine
+                                return result
+                        except TypeError as e:
+                            error_msg = str(e)
+                            if "can't be used in 'await' expression" in error_msg:
+                                # This is the PollingOperation.execute() issue
+                                # We need to patch the PollingOperation to be truly async
+                                logging.warning(f"Detected PollingOperation await issue in {f.__name__}, applying patch...")
+                                
+                                # Apply the patch to make PollingOperation.execute() async
+                                try:
+                                    # Import the module and patch it
+                                    import sys
+                                    if 'comfy_api_nodes.apis.client' in sys.modules:
+                                        client_module = sys.modules['comfy_api_nodes.apis.client']
+                                        if hasattr(client_module, 'PollingOperation'):
+                                            PollingOperation = client_module.PollingOperation
+                                            if not hasattr(PollingOperation.execute, '_async_patched'):
+                                                # Store the original method
+                                                original_execute = PollingOperation.execute
+                                                
+                                                # Create an async wrapper
+                                                async def async_execute_wrapper(self, client=None):
+                                                    # Run the original synchronous execute in a thread
+                                                    loop = asyncio.get_event_loop()
+                                                    return await loop.run_in_executor(None, lambda: original_execute(self, client))
+                                                
+                                                # Replace the method
+                                                PollingOperation.execute = async_execute_wrapper
+                                                PollingOperation.execute._async_patched = True
+                                                logging.info("Successfully patched PollingOperation.execute() to be async")
+                                                
+                                                # Now retry the function call
+                                                result = f(**args)
+                                                if inspect.iscoroutine(result):
+                                                    return await result
+                                                else:
+                                                    return result
+                                            else:
+                                                # Already patched, just retry
+                                                result = f(**args)
+                                                if inspect.iscoroutine(result):
+                                                    return await result
+                                                else:
+                                                    return result
+                                    
+                                    # If patching fails, fall back to original error
+                                    raise e
+                                    
+                                except Exception as patch_e:
+                                    logging.error(f"Failed to patch PollingOperation: {patch_e}")
+                                    raise e  # Re-raise original error
+                            else:
+                                raise
                 task = asyncio.create_task(async_wrapper(f, prompt_id, unique_id, index, args=inputs))
                 # Give the task a chance to execute without yielding
                 await asyncio.sleep(0)
                 if task.done():
                     result = task.result()
+                    # Additional check: if the result is still a coroutine, await it
+                    if inspect.iscoroutine(result):
+                        logging.warning(f"Function {f.__name__} returned an unawaited coroutine, fixing...")
+                        try:
+                            result = await result
+                        except Exception as await_e:
+                            logging.error(f"Failed to await nested coroutine from {f.__name__}: {await_e}")
+                            # Close the coroutine to prevent warnings
+                            result.close()
+                            raise
                     results.append(result)
                 else:
                     results.append(task)
