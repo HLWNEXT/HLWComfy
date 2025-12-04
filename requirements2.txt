@@ -1,6 +1,13 @@
-ffmpeg
+imageio-ffmpeg
+ffmpeg-python
 opencv-python
+opencv-python-headless
+diffusers
 gguf
+transformers
+accelerate
+
+
 simpleeval
 scikit-image
 webcolors
@@ -8,10 +15,14 @@ piexif
 segment-anything
 timm
 openai
-
-triton
-torchaudio
+fal-client
+pydub
 librosa
 lumaai
+onnxruntime
+addict
+
+#SAM2
+git+https://github.com/facebookresearch/sam2
 # triton - skip for now as it's optional and can cause install issues on Windows
 # triton>=2.0.0; platform_system == "Linux"
