@@ -22,6 +22,7 @@ lumaai
 onnxruntime
 addict
 
+
 #SAM2
 git+https://github.com/facebookresearch/sam2
 # triton - skip for now as it's optional and can cause install issues on Windows
