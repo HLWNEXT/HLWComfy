@@ -1,0 +1,17 @@
+ffmpeg
+opencv-python
+gguf
+simpleeval
+scikit-image
+webcolors
+piexif
+segment-anything
+timm
+openai
+
+triton
+torchaudio
+librosa
+lumaai
+# triton - skip for now as it's optional and can cause install issues on Windows
+# triton>=2.0.0; platform_system == "Linux"

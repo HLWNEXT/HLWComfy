@@ -32,9 +32,9 @@ def t5_xxl_detect(state_dict, prefix=""):
     return out
 
 class T5XXLTokenizer(sd1_clip.SDTokenizer):
-    def __init__(self, embedding_directory=None, tokenizer_data={}, min_length=77):
+    def __init__(self, embedding_directory=None, tokenizer_data={}, min_length=77, max_length=99999999):
         tokenizer_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "t5_tokenizer")
-        super().__init__(tokenizer_path, embedding_directory=embedding_directory, pad_with_end=False, embedding_size=4096, embedding_key='t5xxl', tokenizer_class=T5TokenizerFast, has_start_token=False, pad_to_max_length=False, max_length=99999999, min_length=min_length, tokenizer_data=tokenizer_data)
+        super().__init__(tokenizer_path, embedding_directory=embedding_directory, pad_with_end=False, embedding_size=4096, embedding_key='t5xxl', tokenizer_class=T5TokenizerFast, has_start_token=False, pad_to_max_length=False, max_length=max_length, min_length=min_length, tokenizer_data=tokenizer_data)
 
 
 class SD3Tokenizer:
@@ -45,9 +45,9 @@ class SD3Tokenizer:
 
     def tokenize_with_weights(self, text:str, return_word_ids=False, **kwargs):
         out = {}
-        out["g"] = self.clip_g.tokenize_with_weights(text, return_word_ids)
-        out["l"] = self.clip_l.tokenize_with_weights(text, return_word_ids)
-        out["t5xxl"] = self.t5xxl.tokenize_with_weights(text, return_word_ids)
+        out["g"] = self.clip_g.tokenize_with_weights(text, return_word_ids, **kwargs)
+        out["l"] = self.clip_l.tokenize_with_weights(text, return_word_ids, **kwargs)
+        out["t5xxl"] = self.t5xxl.tokenize_with_weights(text, return_word_ids, **kwargs)
         return out
 
     def untokenize(self, token_weight_pair):

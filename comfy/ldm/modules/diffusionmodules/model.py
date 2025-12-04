@@ -36,7 +36,7 @@ def get_timestep_embedding(timesteps, embedding_dim):
 
 def nonlinearity(x):
     # swish
-    return x*torch.sigmoid(x)
+    return torch.nn.functional.silu(x)
 
 
 def Normalize(in_channels, num_groups=32):
@@ -145,7 +145,7 @@ class Downsample(nn.Module):
 
 class ResnetBlock(nn.Module):
     def __init__(self, *, in_channels, out_channels=None, conv_shortcut=False,
-                 dropout, temb_channels=512, conv_op=ops.Conv2d):
+                 dropout=0.0, temb_channels=512, conv_op=ops.Conv2d):
         super().__init__()
         self.in_channels = in_channels
         out_channels = in_channels if out_channels is None else out_channels
@@ -183,7 +183,7 @@ class ResnetBlock(nn.Module):
                                                     stride=1,
                                                     padding=0)
 
-    def forward(self, x, temb):
+    def forward(self, x, temb=None):
         h = x
         h = self.norm1(h)
         h = self.swish(h)
@@ -285,7 +285,7 @@ def pytorch_attention(q, k, v):
     )
 
     try:
-        out = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False)
+        out = comfy.ops.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False)
         out = out.transpose(2, 3).reshape(orig_shape)
     except model_management.OOM_EXCEPTION:
         logging.warning("scaled_dot_product_attention OOMed: switched to slice attention")
