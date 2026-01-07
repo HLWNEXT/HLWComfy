@@ -3,15 +3,15 @@ import contextlib
 import uuid
 from io import BytesIO
 from pathlib import Path
-from typing import IO
+from typing import IO, Optional, Union
 from urllib.parse import urljoin, urlparse
 
 import aiohttp
 import torch
 from aiohttp.client_exceptions import ClientError, ContentTypeError
 
+from comfy_api.input_impl import VideoFromFile
 from comfy_api.latest import IO as COMFY_IO
-from comfy_api.latest import InputImpl
 
 from . import request_logger
 from ._helpers import (
@@ -19,7 +19,6 @@ from ._helpers import (
     get_auth_header,
     is_processing_interrupted,
     sleep_with_interrupt,
-    to_aiohttp_url,
 )
 from .client import _diagnose_connectivity
 from .common_exceptions import ApiServerError, LocalNetworkError, ProcessingInterrupted
@@ -30,9 +29,9 @@ _RETRY_STATUS = {408, 429, 500, 502, 503, 504}
 
 async def download_url_to_bytesio(
     url: str,
-    dest: BytesIO | IO[bytes] | str | Path | None,
+    dest: Optional[Union[BytesIO, IO[bytes], str, Path]],
     *,
-    timeout: float | None = None,
+    timeout: Optional[float] = None,
     max_retries: int = 5,
     retry_delay: float = 1.0,
     retry_backoff: float = 2.0,
@@ -72,10 +71,10 @@ async def download_url_to_bytesio(
 
         is_path_sink = isinstance(dest, (str, Path))
         fhandle = None
-        session: aiohttp.ClientSession | None = None
-        stop_evt: asyncio.Event | None = None
-        monitor_task: asyncio.Task | None = None
-        req_task: asyncio.Task | None = None
+        session: Optional[aiohttp.ClientSession] = None
+        stop_evt: Optional[asyncio.Event] = None
+        monitor_task: Optional[asyncio.Task] = None
+        req_task: Optional[asyncio.Task] = None
 
         try:
             with contextlib.suppress(Exception):
@@ -95,7 +94,7 @@ async def download_url_to_bytesio(
 
             monitor_task = asyncio.create_task(_monitor())
 
-            req_task = asyncio.create_task(session.get(to_aiohttp_url(url), headers=headers))
+            req_task = asyncio.create_task(session.get(url, headers=headers))
             done, pending = await asyncio.wait({req_task, monitor_task}, return_when=asyncio.FIRST_COMPLETED)
 
             if monitor_task in done and req_task in pending:
@@ -235,11 +234,11 @@ async def download_url_to_video_output(
     timeout: float = None,
     max_retries: int = 5,
     cls: type[COMFY_IO.ComfyNode] = None,
-) -> InputImpl.VideoFromFile:
+) -> VideoFromFile:
     """Downloads a video from a URL and returns a `VIDEO` output."""
     result = BytesIO()
     await download_url_to_bytesio(video_url, result, timeout=timeout, max_retries=max_retries, cls=cls)
-    return InputImpl.VideoFromFile(result)
+    return VideoFromFile(result)
 
 
 async def download_url_as_bytesio(

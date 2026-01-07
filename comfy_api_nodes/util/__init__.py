@@ -47,7 +47,6 @@ from .validation_utils import (
     validate_string,
     validate_video_dimensions,
     validate_video_duration,
-    validate_video_frame_count,
 )
 
 __all__ = [
@@ -95,7 +94,6 @@ __all__ = [
     "validate_string",
     "validate_video_dimensions",
     "validate_video_duration",
-    "validate_video_frame_count",
     # Misc functions
     "get_fs_object_size",
 ]

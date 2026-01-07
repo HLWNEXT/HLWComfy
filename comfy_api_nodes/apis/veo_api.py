@@ -1,21 +1,34 @@
-from typing import Optional
+from typing import Optional, Union
+from enum import Enum
 
 from pydantic import BaseModel, Field
 
 
-class VeoRequestInstanceImage(BaseModel):
-    bytesBase64Encoded: str | None = Field(None)
-    gcsUri: str | None = Field(None)
-    mimeType: str | None = Field(None)
+class Image2(BaseModel):
+    bytesBase64Encoded: str
+    gcsUri: Optional[str] = None
+    mimeType: Optional[str] = None
 
 
-class VeoRequestInstance(BaseModel):
-    image: VeoRequestInstanceImage | None = Field(None)
-    lastFrame: VeoRequestInstanceImage | None = Field(None)
+class Image3(BaseModel):
+    bytesBase64Encoded: Optional[str] = None
+    gcsUri: str
+    mimeType: Optional[str] = None
+
+
+class Instance1(BaseModel):
+    image: Optional[Union[Image2, Image3]] = Field(
+        None, description='Optional image to guide video generation'
+    )
     prompt: str = Field(..., description='Text description of the video')
 
 
-class VeoRequestParameters(BaseModel):
+class PersonGeneration1(str, Enum):
+    ALLOW = 'ALLOW'
+    BLOCK = 'BLOCK'
+
+
+class Parameters1(BaseModel):
     aspectRatio: Optional[str] = Field(None, examples=['16:9'])
     durationSeconds: Optional[int] = None
     enhancePrompt: Optional[bool] = None
@@ -24,18 +37,17 @@ class VeoRequestParameters(BaseModel):
         description='Generate audio for the video. Only supported by veo 3 models.',
     )
     negativePrompt: Optional[str] = None
-    personGeneration: str | None = Field(None, description="ALLOW or BLOCK")
+    personGeneration: Optional[PersonGeneration1] = None
     sampleCount: Optional[int] = None
     seed: Optional[int] = None
     storageUri: Optional[str] = Field(
         None, description='Optional Cloud Storage URI to upload the video'
     )
-    resolution: str | None = Field(None)
 
 
 class VeoGenVidRequest(BaseModel):
-    instances: list[VeoRequestInstance] | None = Field(None)
-    parameters: VeoRequestParameters | None = Field(None)
+    instances: Optional[list[Instance1]] = None
+    parameters: Optional[Parameters1] = None
 
 
 class VeoGenVidResponse(BaseModel):
@@ -85,7 +97,7 @@ class Response1(BaseModel):
     raiMediaFilteredReasons: Optional[list[str]] = Field(
         None, description='Reasons why media was filtered by responsible AI policies'
     )
-    videos: Optional[list[Video]] = Field(None)
+    videos: Optional[list[Video]] = None
 
 
 class VeoGenVidPollResponse(BaseModel):

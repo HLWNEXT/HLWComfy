@@ -18,6 +18,9 @@ def llama_detect(state_dict, prefix=""):
     if quant is not None:
         out["llama_quantization_metadata"] = quant
 
+    if "_quantization_metadata" in state_dict:
+        out["llama_quantization_metadata"] = state_dict["_quantization_metadata"]
+
     return out
 
 

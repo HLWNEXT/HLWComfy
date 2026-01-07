@@ -53,6 +53,11 @@ class PatchModelAddDownscale(io.ComfyNode):
         return io.NodeOutput(m)
 
 
+NODE_DISPLAY_NAME_MAPPINGS = {
+    # Sampling
+    "PatchModelAddDownscale": "",
+}
+
 class ModelDownscaleExtension(ComfyExtension):
     @override
     async def get_node_list(self) -> list[type[io.ComfyNode]]:

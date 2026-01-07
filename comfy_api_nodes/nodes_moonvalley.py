@@ -1,8 +1,11 @@
 import logging
+from typing import Optional
 
+import torch
 from typing_extensions import override
 
-from comfy_api.latest import IO, ComfyExtension, Input
+from comfy_api.input import VideoInput
+from comfy_api.latest import IO, ComfyExtension
 from comfy_api_nodes.apis import (
     MoonvalleyPromptResponse,
     MoonvalleyTextToVideoInferenceParams,
@@ -58,7 +61,7 @@ def validate_task_creation_response(response) -> None:
         raise RuntimeError(error_msg)
 
 
-def validate_video_to_video_input(video: Input.Video) -> Input.Video:
+def validate_video_to_video_input(video: VideoInput) -> VideoInput:
     """
     Validates and processes video input for Moonvalley Video-to-Video generation.
 
@@ -79,7 +82,7 @@ def validate_video_to_video_input(video: Input.Video) -> Input.Video:
     return _validate_and_trim_duration(video)
 
 
-def _get_video_dimensions(video: Input.Video) -> tuple[int, int]:
+def _get_video_dimensions(video: VideoInput) -> tuple[int, int]:
     """Extracts video dimensions with error handling."""
     try:
         return video.get_dimensions()
@@ -103,7 +106,7 @@ def _validate_video_dimensions(width: int, height: int) -> None:
         raise ValueError(f"Resolution {width}x{height} not supported. Supported: {supported_list}")
 
 
-def _validate_and_trim_duration(video: Input.Video) -> Input.Video:
+def _validate_and_trim_duration(video: VideoInput) -> VideoInput:
     """Validates video duration and trims to 5 seconds if needed."""
     duration = video.get_duration()
     _validate_minimum_duration(duration)
@@ -116,7 +119,7 @@ def _validate_minimum_duration(duration: float) -> None:
         raise ValueError("Input video must be at least 5 seconds long.")
 
 
-def _trim_if_too_long(video: Input.Video, duration: float) -> Input.Video:
+def _trim_if_too_long(video: VideoInput, duration: float) -> VideoInput:
     """Trims video to 5 seconds if longer."""
     if duration > 5:
         return trim_video(video, 5)
@@ -238,7 +241,7 @@ class MoonvalleyImg2VideoNode(IO.ComfyNode):
     @classmethod
     async def execute(
         cls,
-        image: Input.Image,
+        image: torch.Tensor,
         prompt: str,
         negative_prompt: str,
         resolution: str,
@@ -359,9 +362,9 @@ class MoonvalleyVideo2VideoNode(IO.ComfyNode):
         prompt: str,
         negative_prompt: str,
         seed: int,
-        video: Input.Video | None = None,
+        video: Optional[VideoInput] = None,
         control_type: str = "Motion Transfer",
-        motion_intensity: int | None = 100,
+        motion_intensity: Optional[int] = 100,
         steps=33,
         prompt_adherence=4.5,
     ) -> IO.NodeOutput:
