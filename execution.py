@@ -600,37 +600,6 @@ async def _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, f
             # Apply patches for API client operations if needed
             patch_api_client_operations()
             
-            # Check if this is a ComfyUI v3 API node and inject API key into hidden inputs
-            if isinstance(obj, _ComfyNodeInternal) or (is_class(obj) and issubclass(obj, _ComfyNodeInternal)):
-                # Check if this node is marked as an API node
-                if hasattr(obj, 'define_schema'):
-                    schema = obj.define_schema()
-                    if hasattr(schema, 'is_api_node') and getattr(schema, 'is_api_node', False):
-                        import os
-                        comfy_api_key = os.getenv('COMFY_API_KEY')
-                        print(f"DEBUG: Found API node, env API key exists: {comfy_api_key is not None}")
-                        
-                        if comfy_api_key and hidden_inputs is not None:
-                            # Inject API key into hidden inputs for v3 nodes
-                            hidden_inputs[io.Hidden.api_key_comfy_org] = comfy_api_key
-                            print(f"DEBUG: Injected API key into hidden inputs")
-            # Legacy v1 API node support (if needed)
-            elif hasattr(obj, 'API_NODE') and getattr(obj, 'API_NODE', False):
-                import os
-                comfy_api_key = os.getenv('COMFY_API_KEY')
-                print(f"DEBUG: Found legacy API node, env API key exists: {comfy_api_key is not None}")
-                
-                if comfy_api_key:
-                    # Create a copy of inputs and inject the API key for legacy nodes
-                    inputs = dict(inputs)
-                    if inputs.get('comfy_api_key') is None:
-                        inputs['comfy_api_key'] = comfy_api_key
-                        print(f"DEBUG: Injected API key into legacy inputs")
-                    else:
-                        print(f"DEBUG: API key already present in legacy inputs")
-
-            print(f"DEBUG: Final inputs keys: {list(inputs.keys())}")  # Xinru Liu API related fix
-            
             
             # V3
             if isinstance(obj, _ComfyNodeInternal) or (is_class(obj) and issubclass(obj, _ComfyNodeInternal)):
