@@ -57,7 +57,50 @@ This installation includes **`comfy_kitchen`** (v0.1.0) for loading quantized mo
 - CUDA 13.0+ recommended for optimized operations
 - Falls back to CPU implementations on older CUDA versions
 
+## Post-Update Import Fix Procedure
+
+After pulling upstream ComfyUI updates, some `comfy_api_nodes` files may fail to import if modules have been renamed or removed. The startup log will show `IMPORT FAILED` and `ModuleNotFoundError` entries. Follow this procedure to resolve them.
+
+### Known Module Relocations
+
+| Old import path | New import path | Affected files |
+|---|---|---|
+| `comfy_api_nodes.apinode_utils` | `comfy_api_nodes.util` | `nodes_gemini.py`, `nodes_kling.py` |
+
+### How to Fix a `ModuleNotFoundError` After an Update
+
+1. **Identify the failing file** from the startup log (`IMPORT FAILED: nodes_xyz.py`).
+2. **Find the bad import** — look for `from comfy_api_nodes.<old_module> import ...`.
+3. **Locate where the symbol moved** — check `comfy_api_nodes/util/__init__.py` and its sub-modules (`conversions.py`, `validation_utils.py`, `upload_helpers.py`, `download_helpers.py`).
+4. **Update the import** to point at the new location (usually `from comfy_api_nodes.util import ...`).
+
+### Missing Utility Modules (`mapper_utils`, etc.)
+
+If a utility module referenced in a node file no longer exists in the upstream source, create it locally inside `comfy_api_nodes/`. Document it here so it survives future merges.
+
+| File | Purpose | Status |
+|---|---|---|
+| `comfy_api_nodes/mapper_utils.py` | `model_field_to_node_input()` — maps Pydantic model fields to ComfyUI INPUT_TYPES entries | Created locally; not in upstream |
+
+**`model_field_to_node_input` signature:**
+```python
+model_field_to_node_input(io_type, model_cls, field_name, enum_type=None, **kwargs)
+# Returns (io_type, {tooltip, **kwargs}) or ([enum_values], {tooltip, **kwargs}) for IO.COMBO
+```
+
 ## Recent Changes
+
+### 2026-03-11: Upgrade to ComfyUI v0.16.4
+
+**Updated:**
+- Merged upstream ComfyUI v0.16.4 (branch renamed from `update/v0.16.2` → `update/v0.16.4`, then merged to `master`)
+- New Gemini image nodes: **Nano Banana** (`GeminiImage`), **Nano Banana Pro** (`GeminiImage2`), **Nano Banana 2** (`GeminiNanoBanana2`) backed by Gemini 3.x image models
+- New **Math Expression** node with simpleeval evaluation
+- New **TencentSmartTopology** node
+- Gemini LLM model list expanded with Gemini 3.x models (gemini-3-pro-preview, gemini-3-1-pro, gemini-3-1-flash-lite)
+
+**Fixed:**
+- `execution.py`: Guard `COMFY_API_KEY` injection to **v1 nodes only** — v3-style `IO.ComfyNode` nodes (`GeminiImage`, etc.) crashed with `unexpected keyword argument 'comfy_api_key'` because they handle auth internally via `sync_op()`. Fix: check `v3_data is None` before injecting. See [Post-Update section](#v3-node-comfy_api_key-injection-guard) below.
 
 ### 2026-01-28: COMFY_API_KEY Integration & Bug Fixes
 
@@ -98,6 +141,45 @@ HLWComfy/
 ```
 
 ## Development Notes
+
+### V3 Node `COMFY_API_KEY` Injection Guard
+
+ComfyUI v0.16+ introduces **v3-style nodes** that extend `IO.ComfyNode` (e.g., `GeminiImage`, `GeminiNode`, `GeminiNanoBanana2`). These nodes use the new `define_schema()` / `execute()` pattern and handle API auth **internally** via `sync_op()` — the framework reads their `IO.Hidden.api_key_comfy_org` declaration automatically.
+
+#### The Problem
+
+The local `execution.py` injection block (Krita API integration) injects `comfy_api_key` into **all** nodes marked `API_NODE=True`. When this runs for a v3 node, the kwarg is passed into the v3 dispatch chain (`EXECUTE_NORMALIZED_ASYNC`) which calls `execute()` — which does **not** accept `comfy_api_key` as a parameter:
+
+```
+TypeError: GeminiImage.execute() got an unexpected keyword argument 'comfy_api_key'
+```
+
+#### The Fix — `execution.py`
+
+Guard the injection with `v3_data is None`. `v3_data` is only set for v3 nodes, so this precisely targets v1 nodes:
+
+```python
+# execution.py  — inside _async_map_node_over_list, before the coroutine dispatch
+
+# Only inject for v1 API nodes — v3 nodes (IO.ComfyNode) handle auth internally
+if v3_data is None and hasattr(obj, 'API_NODE') and getattr(obj, 'API_NODE', False):
+    comfy_api_key = os.getenv('COMFY_API_KEY')
+    if comfy_api_key:
+        inputs = dict(inputs)
+        if inputs.get('comfy_api_key') is None:
+            inputs['comfy_api_key'] = comfy_api_key
+```
+
+**Apply this fix every time upstream updates introduce new v3 API nodes** and the injection block causes `unexpected keyword argument` errors.
+
+#### How to detect v3 vs v1 nodes
+
+| Trait | v1 node | v3 node |
+|---|---|---|
+| Base class | `ComfyNodeABC` | `IO.ComfyNode` |
+| Schema | `INPUT_TYPES()` classmethod | `define_schema()` classmethod |
+| Execution | `FUNCTION = "api_call"`, `api_call(self, ...)` | `async def execute(cls, ...)` |
+| Auth wiring | `"hidden": {"comfy_api_key": "API_KEY_COMFY_ORG"}` | `IO.Hidden.api_key_comfy_org` in `define_schema` |
 
 ### API Authentication Architecture
 
