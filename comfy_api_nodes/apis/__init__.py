@@ -1197,6 +1197,11 @@ class KlingImageGenImageReferenceType(str, Enum):
     face = 'face'
 
 
+class KlingImageGenModelName(str, Enum):
+    kling_v1 = 'kling-v1'
+    kling_v1_5 = 'kling-v1-5'
+
+
 class KlingImageGenerationsRequest(BaseModel):
     aspect_ratio: Optional[KlingImageGenAspectRatio] = '16:9'
     callback_url: Optional[AnyUrl] = Field(

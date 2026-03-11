@@ -10,8 +10,9 @@ This workflow updates the HLWComfy core by pulling from the public upstream Comf
 2. Ensure the local branch is in sync with the private remote `origin` master:
    `git checkout master`
    `git pull origin master`
-3. Determine the target ComfyUI version or commit, and create a dedicated branch for the update:
-   `git checkout -b update/vX.Y.Z` or `git checkout -b update/latest`
+3. Determine the target ComfyUI version and create a dynamically named branch for the update:
+   `$version = python -c "import comfyui_version; print(comfyui_version.__version__)"`
+   `git checkout -b "update/v$version"` or explicitly define `update/v0.16.2` etc.
 // turbo
 4. Add the public upstream remote if it doesn't exist and safely fetch updates, preventing accidental pushes:
    `git remote add upstream https://github.com/comfyanonymous/ComfyUI.git`

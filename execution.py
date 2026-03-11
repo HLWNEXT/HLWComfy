@@ -280,8 +280,8 @@ async def _async_map_node_over_list(prompt_id, unique_id, obj, input_data_all, f
                 f = getattr(obj, func)
 
             # FOR KRITA AI INTEGRATION, CONNECTS TO COMFYUI API NODES
-            # Inject API key for API nodes
-            if hasattr(obj, 'API_NODE') and getattr(obj, 'API_NODE', False):
+            # Inject API key for v1 API nodes only (v3 nodes handle auth internally via sync_op)
+            if v3_data is None and hasattr(obj, 'API_NODE') and getattr(obj, 'API_NODE', False):
                 import os
                 comfy_api_key = os.getenv('COMFY_API_KEY')
                 if comfy_api_key:
