@@ -27,31 +27,47 @@ def get_node_id(node_cls: type[IO.ComfyNode]) -> str:
     return node_cls.hidden.unique_id
 
 
-def get_auth_header(node_cls: type[IO.ComfyNode]) -> dict[str, str]:
+def get_auth_header(
+    node_cls: type[IO.ComfyNode],
+    project_name: str | None = None,
+) -> dict[str, str]:
     """
     Get authentication header for API requests.
-    
+
     Priority order:
     1. Bearer token from hidden parameters (highest priority)
-    2. COMFY_API_KEY environment variable
-    3. API key from hidden parameters (fallback)
-    
+    2. HLW project key store — resolved from *project_name* via the
+       HLW_Custom key_store singleton (custom node, optional)
+    3. COMFY_API_KEY environment variable
+    4. API key from hidden parameters (fallback)
+
     Returns:
         dict[str, str]: Authentication header dictionary
     """
     # Priority 1: Check for auth token from hidden parameters
     if node_cls.hidden.auth_token_comfy_org:
         return {"Authorization": f"Bearer {node_cls.hidden.auth_token_comfy_org}"}
-    
-    # Priority 2: Check for COMFY_API_KEY environment variable
+
+    # Priority 2: HLW project key store (custom node singleton)
+    # Safe to call even when HLW_Custom is not installed — ImportError is caught.
+    if project_name:
+        try:
+            from HLW_Custom import key_store as _hlw_key_store  # type: ignore
+            key = _hlw_key_store.resolve_key(project_name)
+            if key:
+                return {"X-API-KEY": key}
+        except ImportError:
+            pass  # HLW_Custom not installed — fall through silently
+
+    # Priority 3: Check for COMFY_API_KEY environment variable
     comfy_api_key = os.environ.get("COMFY_API_KEY")
     if comfy_api_key:
         return {"X-API-KEY": comfy_api_key}
-    
-    # Priority 3: Fall back to api_key from hidden parameters
+
+    # Priority 4: Fall back to api_key from hidden parameters
     if node_cls.hidden.api_key_comfy_org:
         return {"X-API-KEY": node_cls.hidden.api_key_comfy_org}
-    
+
     return {}
 
 
